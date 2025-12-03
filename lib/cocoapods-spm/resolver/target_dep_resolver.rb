@@ -27,11 +27,39 @@ module Pod
 
         def resolve_dependencies_for_targets
           specs = @aggregate_targets.flat_map(&:specs).uniq
+          specs_by_full_name = specs.to_h { |s| [s.name, s] }
+          specs_by_root_name = {}
+          specs.each { |s| specs_by_root_name[s.root.name] ||= s.root }
           specs.each do |spec|
+            deps = collect_spm_deps_transitively(spec, specs_by_full_name, specs_by_root_name)
+            @result.spm_dependencies_by_target[spec.name] = merge_spm_dependencies(deps)
+          end
+        end
+
+        def collect_spm_deps_transitively(start_spec, specs_by_full_name, specs_by_root_name)
+          spm_deps = []
+          visited_roots = {}
+          stack = [start_spec]
+
+          until stack.empty?
+            spec = stack.pop
+            root_name = spec.root.name
+            next if visited_roots[root_name]
+            visited_roots[root_name] = true
+
             deps = spec.spm_dependencies
             deps += spec.root.spm_dependencies if spec.subspec?
-            @result.spm_dependencies_by_target[spec.name] = deps.uniq
+            spm_deps.concat(deps)
+
+            spec.dependencies.each do |pod_dep|
+              dep_name = pod_dep.name
+              dep_root = dep_name.split('/').first
+              dep_spec = specs_by_full_name[dep_name] || specs_by_root_name[dep_root]
+              stack << dep_spec unless dep_spec.nil?
+            end
           end
+
+          spm_deps
         end
 
         def resolve_dependencies_for_aggregate_targets
